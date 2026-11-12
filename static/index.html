@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>배경 제거</title>
+<style>
+  :root { --accent: #6c5ce7; --bg: #f7f7fb; --text: #1f1f2e; --muted: #6b6b80; --card: #fff; --border: #e3e3ee; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 16px; text-align: center; }
+  h1 { font-size: clamp(28px, 5vw, 40px); margin: 0 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 32px; }
+  .drop { display: block; background: var(--card); border: 2px dashed var(--border); border-radius: 20px; padding: 56px 16px; cursor: pointer; transition: .15s; }
+  .drop.over, .drop:hover { border-color: var(--accent); background: #f3f1ff; }
+  .btn { display: inline-block; border: 0; border-radius: 999px; padding: 14px 28px; font-size: 16px; font-weight: 600; cursor: pointer; background: var(--accent); color: #fff; text-decoration: none; }
+  .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .hint { color: var(--muted); font-size: 14px; margin-top: 12px; }
+  .result { display: none; gap: 16px; grid-template-columns: 1fr 1fr; margin-top: 8px; }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 12px; }
+  .panel p { margin: 0 0 8px; font-weight: 600; color: var(--muted); font-size: 14px; }
+  .frame { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 10px; overflow: hidden; position: relative;
+    background: repeating-conic-gradient(#e6e6e6 0 25%, #fff 0 50%) 0 0 / 20px 20px; }
+  .frame.plain { background: #f0f0f4; }
+  .frame img { max-width: 100%; max-height: 100%; }
+  .spinner { width: 40px; height: 40px; border: 4px solid #ddd; border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .actions { display: none; gap: 12px; justify-content: center; margin-top: 24px; flex-wrap: wrap; }
+  .error { color: #d63031; margin-top: 16px; }
+  @media (max-width: 600px) { .result { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>이미지 배경 제거</h1>
+  <p class="sub">이미지를 올리면 AI가 배경을 투명하게 지워 드려요.</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="image/png,image/jpeg,image/webp" hidden>
+    <span class="btn">이미지 업로드</span>
+    <div class="hint">또는 파일을 여기로 끌어다 놓으세요 · PNG, JPEG, WEBP · 최대 20MB</div>
+  </label>
+
+  <div class="result" id="result">
+    <div class="panel"><p>원본</p><div class="frame plain"><img id="before" alt="원본"></div></div>
+    <div class="panel"><p>배경 제거</p><div class="frame" id="afterFrame"><img id="after" alt="결과"></div></div>
+  </div>
+
+  <div class="error" id="error"></div>
+
+  <div class="actions" id="actions">
+    <a class="btn" id="download" download>PNG 다운로드</a>
+    <button class="btn ghost" id="again">다른 이미지</button>
+  </div>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const drop = $("drop"), fileInput = $("file");
+  let resultUrl;
+
+  fileInput.addEventListener("change", () => fileInput.files[0] && handle(fileInput.files[0]));
+  ["dragover", "dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(e => drop.addEventListener(e, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", ev => { ev.preventDefault(); ev.dataTransfer.files[0] && handle(ev.dataTransfer.files[0]); });
+  $("again").addEventListener("click", reset);
+
+  async function handle(file) {
+    $("error").textContent = "";
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      $("error").textContent = "PNG, JPEG, WEBP 이미지만 업로드할 수 있습니다.";
+      return;
+    }
+    drop.style.display = "none";
+    $("result").style.display = "grid";
+    $("actions").style.display = "none";
+    $("before").src = URL.createObjectURL(file);
+    $("after").style.display = "none";
+    $("afterFrame").insertAdjacentHTML("beforeend", '<div class="spinner" id="spin"></div>');
+
+    try {
+      const form = new FormData();
+      form.append("image", file);
+      const res = await fetch("/api/remove-bg", { method: "POST", body: form });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "처리 중 오류가 발생했습니다.");
+      if (resultUrl) URL.revokeObjectURL(resultUrl);
+      resultUrl = URL.createObjectURL(await res.blob());
+      $("after").src = resultUrl;
+      $("after").style.display = "";
+      $("download").href = resultUrl;
+      $("download").download = file.name.replace(/\.[^.]+$/, "") + "_nobg.png";
+      $("actions").style.display = "flex";
+    } catch (e) {
+      $("error").textContent = e.message;
+      $("actions").style.display = "flex";
+      $("download").style.display = "none";
+    } finally {
+      $("spin")?.remove();
+    }
+  }
+
+  function reset() {
+    fileInput.value = "";
+    drop.style.display = "";
+    $("result").style.display = "none";
+    $("actions").style.display = "none";
+    $("download").style.display = "";
+    $("error").textContent = "";
+  }
+</script>
+</body>
+</html>
